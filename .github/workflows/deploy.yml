@@ -1,4 +1,4 @@
-name: Build, Upload to Nexus, and Deploy
+name: Versioned Nexus Deployment
 
 on:
   push:
@@ -14,30 +14,51 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify HTML file
+      - name: Create release version
         run: |
-          test -f index.html
-          echo "index.html found"
+          echo "RELEASE_VERSION=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "Preparing release: ${GITHUB_SHA::7}"
 
-      - name: Upload to Nexus
+      - name: Upload versioned release to Nexus
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USER: ${{ secrets.NEXUS_USER }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
+          set -euo pipefail
+
           curl --fail --show-error --silent \
             --user "$NEXUS_USER:$NEXUS_PASSWORD" \
             --upload-file index.html \
-            "$NEXUS_URL/repository/nginx-releases/index.html"
-          echo "Upload to Nexus successful"
+            "$NEXUS_URL/repository/nginx-releases/releases/$RELEASE_VERSION/index.html"
 
-      - name: Deploy to Nginx
-        run: |
-          cp index.html /var/www/myapp/index.html
-          echo "Deployment completed"
+          echo "Release uploaded: $RELEASE_VERSION"
 
-      - name: Verify deployment
+      - name: Download release from Nexus
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
+          set -euo pipefail
+
+          curl --fail --show-error --silent \
+            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+            --output downloaded-index.html \
+            "$NEXUS_URL/repository/nginx-releases/releases/$RELEASE_VERSION/index.html"
+
+          cmp index.html downloaded-index.html
+          echo "Nexus artifact downloaded and verified"
+
+      - name: Deploy downloaded release to Nginx
+        run: |
+          set -euo pipefail
+          cp downloaded-index.html /var/www/myapp/index.html
+          echo "Deployed release: $RELEASE_VERSION"
+
+      - name: Verify Nginx deployment
+        run: |
+          set -euo pipefail
           curl --fail --show-error \
             -H "Host: myapp.local" \
             http://localhost/
