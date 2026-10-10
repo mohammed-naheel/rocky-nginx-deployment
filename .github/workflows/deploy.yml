@@ -1,4 +1,4 @@
-name: Rocky Linux Deployment
+name: Build, Upload to Nexus, and Deploy
 
 on:
   push:
@@ -19,12 +19,26 @@ jobs:
           test -f index.html
           echo "index.html found"
 
+      - name: Upload to Nexus
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          curl --fail --show-error --silent \
+            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+            --upload-file index.html \
+            "$NEXUS_URL/repository/nginx-releases/index.html"
+          echo "Upload to Nexus successful"
+
       - name: Deploy to Nginx
         run: |
           cp index.html /var/www/myapp/index.html
           echo "Deployment completed"
 
-      - name: Verify deployed website
+      - name: Verify deployment
         run: |
-          curl -f -H "Host: myapp.local" http://localhost/
+          curl --fail --show-error \
+            -H "Host: myapp.local" \
+            http://localhost/
           echo "Nginx verification successful"
