@@ -1,0 +1,76 @@
+name: Rollback Nginx Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "7-character commit ID of the release to restore"
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: self-hosted
+
+    steps:
+      - name: Validate release version
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_VERSION" =~ ^[a-fA-F0-9]{7}$ ]]; then
+            echo "Error: Enter a valid 7-character commit ID."
+            exit 1
+          fi
+
+          echo "Restoring release: $RELEASE_VERSION"
+
+      - name: Download selected release from Nexus
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+
+          curl --fail --show-error --silent \
+            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+            --output rollback-index.html \
+            "$NEXUS_URL/repository/nginx-releases/releases/$RELEASE_VERSION/index.html"
+
+          test -s rollback-index.html
+          echo "Selected release downloaded successfully"
+
+      - name: Back up current page and deploy rollback
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+
+          TARGET="/var/www/myapp/index.html"
+          BACKUP="/var/www/myapp/index.html.before-rollback-$(date +%Y%m%d_%H%M%S)"
+          TEMP="$(mktemp /var/www/myapp/.index.html.XXXXXX)"
+
+          cleanup() {
+            rm -f "$TEMP"
+          }
+          trap cleanup EXIT
+
+          test -f "$TARGET"
+          cp "$TARGET" "$BACKUP"
+
+          install -m 0644 rollback-index.html "$TEMP"
+          mv -f "$TEMP" "$TARGET"
+
+          if ! curl --fail --show-error --silent \
+            -H "Host: myapp.local" http://localhost/ \
+            -o /tmp/rollback-verification.html; then
+            echo "Verification failed; restoring previous page"
+            cp "$BACKUP" "$TARGET"
+            exit 1
+          fi
+
+          echo "Rollback completed: $RELEASE_VERSION"
+          echo "Previous page backup: $BACKUP"
