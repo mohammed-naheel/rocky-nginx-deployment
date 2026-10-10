@@ -7,23 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  deploy:
     runs-on: self-hosted
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show runner information
-        run: |
-          echo "Hostname:"
-          hostname
-          echo "User:"
-          whoami
-          echo "Working directory:"
-          pwd
-
-      - name: Test HTML file
+      - name: Verify HTML file
         run: |
           test -f index.html
-          echo "index.html exists"
+          echo "index.html found"
+
+      - name: Deploy to Nginx
+        run: |
+          cp index.html /var/www/myapp/index.html
+          echo "Deployment completed"
+
+      - name: Verify deployed website
+        run: |
+          curl -f -H "Host: myapp.local" http://localhost/
+          echo "Nginx verification successful"
