@@ -1,4 +1,4 @@
-name: Versioned Nexus Deployment
+name: Versioned Nexus Deployment with Auto Rollback
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
           echo "RELEASE_VERSION=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           echo "Preparing release: ${GITHUB_SHA::7}"
 
-      - name: Upload versioned release to Nexus
+      - name: Upload release to Nexus
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USER: ${{ secrets.NEXUS_USER }}
@@ -32,9 +32,9 @@ jobs:
             --upload-file index.html \
             "$NEXUS_URL/repository/nginx-releases/releases/$RELEASE_VERSION/index.html"
 
-          echo "Release uploaded: $RELEASE_VERSION"
+          echo "Release uploaded to Nexus"
 
-      - name: Download release from Nexus
+      - name: Download and verify release
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USER: ${{ secrets.NEXUS_USER }}
@@ -48,18 +48,47 @@ jobs:
             "$NEXUS_URL/repository/nginx-releases/releases/$RELEASE_VERSION/index.html"
 
           cmp index.html downloaded-index.html
-          echo "Nexus artifact downloaded and verified"
+          echo "Nexus artifact verified"
 
-      - name: Deploy downloaded release to Nginx
+      - name: Deploy and automatically rollback on failure
+        env:
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           set -euo pipefail
-          cp downloaded-index.html /var/www/myapp/index.html
-          echo "Deployed release: $RELEASE_VERSION"
 
-      - name: Verify Nginx deployment
-        run: |
-          set -euo pipefail
-          curl --fail --show-error \
+          TARGET="/var/www/myapp/index.html"
+          BACKUP="/var/www/myapp/index.html.before-${RELEASE_VERSION}-$(date +%Y%m%d_%H%M%S)"
+          TEMP="$(mktemp /var/www/myapp/.index.html.XXXXXX)"
+          VERIFY="$(mktemp)"
+
+          trap 'rm -f "$TEMP" "$VERIFY"' EXIT
+
+          if [ ! -f "$TARGET" ]; then
+            echo "ERROR: Current website file is missing; cannot create a backup."
+            exit 1
+          fi
+
+          cp "$TARGET" "$BACKUP"
+          echo "Backup created: $BACKUP"
+
+          install -m 0644 downloaded-index.html "$TEMP"
+          mv -f "$TEMP" "$TARGET"
+
+          if ! curl --fail --show-error --silent \
             -H "Host: myapp.local" \
-            http://localhost/
-          echo "Nginx verification successful"
+            http://localhost/ \
+            --output "$VERIFY"; then
+
+            echo "Deployment verification failed. Restoring previous release."
+            cp "$BACKUP" "$TARGET"
+            exit 1
+          fi
+
+          if ! cmp -s downloaded-index.html "$VERIFY"; then
+            echo "Content verification failed. Restoring previous release."
+            cp "$BACKUP" "$TARGET"
+            exit 1
+          fi
+
+          echo "Deployment successful: $RELEASE_VERSION"
+          echo "Previous version backup: $BACKUP"
